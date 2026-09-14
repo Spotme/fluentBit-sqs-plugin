@@ -313,13 +313,7 @@ func createRecordString(timestamp time.Time, record map[interface{}]interface{})
 	// convert timestamp to RFC3339Nano
 	m["@timestamp"] = timestamp.UTC().Format(time.RFC3339Nano)
 	for k, v := range record {
-		switch t := v.(type) {
-		case []byte:
-			// prevent encoding to base64
-			m[k.(string)] = string(t)
-		default:
-			m[k.(string)] = v
-		}
+		m[k.(string)] = normalizeValue(v)
 	}
 	js, err := json.Marshal(m)
 	if err != nil {
@@ -328,6 +322,32 @@ func createRecordString(timestamp time.Time, record map[interface{}]interface{})
 	}
 
 	return string(js), nil
+}
+
+// normalizeValue recursively converts the map[interface{}]interface{}/[]interface{} shapes produced by
+// Fluent Bit's msgpack decoder into map[string]interface{}/[]interface{}, since encoding/json cannot
+// marshal a map keyed by interface{} (only by string). Any nested object in a record - not just
+// top-level ones - needs this, e.g. Kubernetes metadata or a merged JSON log line with nested fields.
+func normalizeValue(v interface{}) interface{} {
+	switch t := v.(type) {
+	case []byte:
+		// prevent encoding to base64
+		return string(t)
+	case map[interface{}]interface{}:
+		m := make(map[string]interface{}, len(t))
+		for k, val := range t {
+			m[fmt.Sprintf("%v", k)] = normalizeValue(val)
+		}
+		return m
+	case []interface{}:
+		s := make([]interface{}, len(t))
+		for i, val := range t {
+			s[i] = normalizeValue(val)
+		}
+		return s
+	default:
+		return v
+	}
 }
 
 func writeDebugLog(message string) {
